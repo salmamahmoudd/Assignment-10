@@ -14,35 +14,39 @@ const userSchema = new mongoose.Schema({
     password: {
         type: String,
         required: function(){
-        return  this.provider == Provider.System;
+            return this.provider == Provider.System;
         },
     },
     phone: String,
-    DOB:Date,
+    DOB: Date,
     gender:{
-        type:String,
-        enum:Object.values(GenderEnum),
+        type: String,
+        enum: Object.values(GenderEnum),
         default: GenderEnum.Female,
     },
     role:{
-    type:String,
-    enum:Object.values(RoleEnum),
-    default:RoleEnum.User
+        type: String,
+        enum: Object.values(RoleEnum),
+        default: RoleEnum.User
     },
     confirmEmail:{
-        type:Boolean,
-        default:false,
+        type: Boolean,
+        default: false,
     },
     provider:{
-        type:String,
-        enum:Object.values(Provider),
-        default:Provider.System,
+        type: String,
+        enum: Object.values(Provider),
+        default: Provider.System,
     },
-    profilePic:String,
+    profilePic: String,
+    profileCoverImgs: [String], 
+    otp: Number,               
+    otpExpire: Date,           
 },
 {
     timestamps: true,
 }
-)
-const UserModel = mongoose.model("User", userSchema)
+);
+
+const UserModel = mongoose.model("User", userSchema);
 export default UserModel;

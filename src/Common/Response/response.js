@@ -8,18 +8,26 @@ export function globalErrHandling(error, req, res, next) {
   return NODE_ENV == "dev"
     ? res
         .status(error.cause?.statusCode ?? 500)
-        .json({ errMsg: error.message, error, stack: error.stack })
+        .json({ 
+          errMsg: error.message, 
+          stack: error.stack,
+          extra: error.cause?.extra
+         })
     : res
         .status(error.cause?.statusCode ?? 500)
-        .json({ errMsg: error.message, error, stack: error.stack });
+        .json({ 
+          errMsg: error.message ,
+          error, stack: error.stack ,     
+          extra: error.cause?.extra
+         });
 }
 
 export function notFoundException(msg) {
   throw new Error(msg, { cause: { statusCode: 404 } });
 }
 
-export function badRequestException(msg) {
-  throw new Error(msg, { cause: { statusCode: 400 } });
+export function badRequestException(msg , extra) {
+  throw new Error(msg, { cause: { statusCode: 400 , extra } });
 }
 
 export function conflictException(msg) {

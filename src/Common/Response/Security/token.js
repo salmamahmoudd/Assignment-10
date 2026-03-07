@@ -33,24 +33,28 @@ export function decodeToken({token}){
   return jwt.decode(token)
 }
 export function generateAccessAndRefreshTokens({user}){
-  const  { accessSignature , refreshSignature } = getSignature(user.role)
+  if(!user) throw new Error("User is required for generating tokens");
 
-const access_token = generateToken({ 
-  signature: accessSignature, 
-  options:{
-   audience: [user.role , TokenType.access],
-   expiresIn: 60 * 15,
-   subject:user._id.toString(),
-},
-});
+  const userData = user._doc ? user._doc : user; 
+  const { accessSignature , refreshSignature } = getSignature(userData.role);
 
-const refresh_token = generateToken({ 
-  signature: refreshSignature, 
-  options:{
-   audience:[user.role , TokenType.refresh],
-   expiresIn: "1y",
-   subject:user._id.toString(),
-  }, 
-});
-return {access_token ,refresh_token}
+  const access_token = generateToken({ 
+    signature: accessSignature, 
+    options:{
+      audience: [userData.role , TokenType.access],
+      expiresIn: 60 * 15,
+      subject: userData._id.toString(),
+    },
+  });
+
+  const refresh_token = generateToken({ 
+    signature: refreshSignature, 
+    options:{
+      audience:[userData.role , TokenType.refresh],
+      expiresIn: "1y",
+      subject:userData._id.toString(),
+    }, 
+  });
+
+  return { access_token , refresh_token }
 }

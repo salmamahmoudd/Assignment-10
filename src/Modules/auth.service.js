@@ -1,120 +1,109 @@
-import {TokenType} from '../Common/Response/Enums/token.enums.js'
-import { ENCRYPTION_KEY, GOOGLE_CLIENT_ID } from "../../config/config.service.js";
-import { compareOperation, hashOperation } from "../Common/Response/Security/hash.js";
-import { badRequestException, conflictException, notFoundException } from "../Common/Response/response.js";
 import UserModel from "../DB/Models/User.model.js";
 import * as DBRepo from "../DB/Models/db.respoastory.js";
-import CryptoJS from "crypto-js"
-import { generateAccessAndRefreshTokens, generateToken, getSignature } from '../Common/Response/Security/token.js';
-import { OAuth2Client } from 'google-auth-library';
+import { hashOperation, compareOperation } from "../Common/Response/Security/hash.js";
+import CryptoJS from "crypto-js";
+import { ENCRYPTION_KEY, GOOGLE_CLIENT_ID } from "../../config/config.service.js";
+import { generateAccessAndRefreshTokens } from "../Common/Response/Security/token.js";
+import { badRequestException, conflictException, notFoundException } from "../Common/Response/response.js";
+import { OAuth2Client } from "google-auth-library";
 import { Provider } from '../Common/Response/Enums/user.enums.js';
+import nodemailer from "nodemailer";
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
 export async function signup(bodyData) {
+  const { email, phone, password } = bodyData;
 
-  const { email } = bodyData;
+  const existing = await DBRepo.findOne({ model: UserModel, filters: { email }});
+  if (existing) return conflictException("Email Already Exists");
 
-  const isEmail = await DBRepo.findOne({ 
-    model:UserModel ,
-    filters:{email},
-});
+  bodyData.password = await hashOperation({ plainText: password });
 
-  if (isEmail) {
-    return conflictException("Email Already Exists")
+  if(phone){
+    bodyData.phone = CryptoJS.AES.encrypt(phone, ENCRYPTION_KEY).toString();
   }
 
-  bodyData.password =  await hashOperation({
-    plainText: bodyData.password
+  const otp = Math.floor(100000 + Math.random() * 900000);
+  bodyData.otp = otp;
+  bodyData.otpExpire = Date.now() + 5*60*1000;
+
+  const user = await DBRepo.create({ model: UserModel, insertedData: bodyData });
+
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: "Your Verification Code",
+    html: `<h2>Your OTP is: ${otp}</h2><p>Valid for 5 minutes</p>`
   });
 
-  const phoneEncrypted = CryptoJS.AES.encrypt(
-    bodyData.phone,
-    ENCRYPTION_KEY).toString();
-
-  bodyData.phone = phoneEncrypted;
-
-  const result = await DBRepo.create
-  ({
-    model:UserModel, 
-    insertedData:bodyData,
-});
-  return result;
+  return { message: "User created. OTP sent to email." };
 }
 
-export async function login(bodyData){
-    const { email , password } = bodyData;
-    const user = await DBRepo.findOne({
-      model:UserModel,
-      filters:{ email }
-    });
-    
-  if (!user) {
-    return notFoundException("Invalid info")
-  }
- 
-  const isPasswordValid = await compareOperation({
-   plainValue: password, 
-   hashedValue: user.password
-  });
+export async function verifyOtp({ email, otp }) {
+  const user = await DBRepo.findOne({ model: UserModel, filters: { email }});
+  if (!user) return notFoundException("User not found");
 
-  if(!isPasswordValid){
-    return notFoundException("Invalid info")
-  }
+  if(user.otp !== Number(otp)) return badRequestException("Invalid OTP");
+  if(Date.now() > user.otpExpire) return badRequestException("OTP expired");
 
-return generateAccessAndRefreshTokens(user);
+  user.confirmEmail = true;
+  user.otp = null;
+  user.otpExpire = null;
+  await user.save();
+
+  return { message: "Email verified successfully" };
 }
 
-async function verifyGoogleToken(idToken){
-  const client = new OAuth2Client();
-  const ticket = await client.verifyIdToken({
-      idToken,
-      audience: GOOGLE_CLIENT_ID,
-    });
+export async function login({ email, password }) {
+  const user = await DBRepo.findOne({ model: UserModel, filters:{ email }});
+  if(!user) return notFoundException("Invalid info");
 
-    const payload = ticket.getPayload();
-    return payload;
-}
-
-export async function loginWithGoogle(idToken){
-
-  const payload = await verifyGoogleToken(idToken)
-
-  if(!payload.email_verified){
-  return badRequestException("Email must be verified");
- }
-  const user = await DBRepo.findOne({
-    model: UserModel,
-    filters:{email:payload.email ,provider:Provider.Google},
-  });
-  if(!user){
-  return signupWithGmail(idToken);
-  }
+  const valid = await compareOperation({ plainValue: password, hashedValue: user.password });
+  if(!valid) return notFoundException("Invalid info");
 
   return generateAccessAndRefreshTokens({user});
 }
-export async function signupWithGmail(idToken){  
-  const payloadGoogleToken = await verifyGoogleToken(idToken);
-  
-  if(!payloadGoogleToken.email_verified){
-  return badRequestException("Email must be verified");
- }
-  const user = await DBRepo.findOne({
-    model: UserModel,
-    filters:{email:payloadGoogleToken.email},
-  });
-  if(user){
-    if(user.provider == Provider.System){
-      return badRequestException("Account Already Exists , login with your email and password")
-    }
-    return {status:200 , result:await loginWithGoogle(idToken)};
-  }
-const newUser = await DBRepo.create({
-    model:UserModel , insertedData:{
-    email:payloadGoogleToken.email,
-    userName:payloadGoogleToken.name,
-    profilePic:payloadGoogleToken.picture,
-    confirmEmail:true,
-    provider:Provider.Google,
-  },
-});
-  return {status:201 ,result: generateAccessAndRefreshTokens({user :newUser})}
+
+async function verifyGoogleToken(idToken){
+  const client = new OAuth2Client(GOOGLE_CLIENT_ID);
+  const ticket = await client.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
+  return ticket.getPayload();
 }
 
+export async function loginWithGoogle(idToken){
+  const payload = await verifyGoogleToken(idToken);
+  if(!payload.email_verified) return badRequestException("Email must be verified");
+
+  const user = await DBRepo.findOne({ model: UserModel, filters:{ email:payload.email , provider:Provider.Google }});
+  if(!user) return signupWithGmail(idToken);
+
+  return generateAccessAndRefreshTokens({user});
+}
+
+export async function signupWithGmail(idToken){
+  const payload = await verifyGoogleToken(idToken);
+  if(!payload.email_verified) return badRequestException("Email must be verified");
+
+  const existing = await DBRepo.findOne({ model: UserModel, filters:{ email:payload.email }});
+  if(existing){
+    if(existing.provider == Provider.System)
+      return badRequestException("Account exists, login with email/password");
+    return {status:200 , result: await loginWithGoogle(idToken)};
+  }
+
+  const newUser = await DBRepo.create({ model:UserModel, insertedData:{
+    email: payload.email,
+    userName: payload.name,
+    profilePic: payload.picture,
+    confirmEmail: true,
+    provider: Provider.Google
+  }});
+
+  return { status:201, result: generateAccessAndRefreshTokens({user :newUser}) };
+}
