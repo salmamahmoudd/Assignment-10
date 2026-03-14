@@ -42,7 +42,6 @@ export async function signup(bodyData) {
     subject: "Your Verification Code",
     html: `<h2>Your OTP is: ${otp}</h2><p>Valid for 5 minutes</p>`
   });
-
   return { message: "User created. OTP sent to email." };
 }
 
